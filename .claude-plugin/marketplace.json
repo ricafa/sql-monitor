@@ -1,0 +1,6 @@
+{
+  "name": "ricardo-mods",
+  "owner": { "name": "Ricardo CF" },
+  "description": "Mods pessoais do Claude Code",
+  "plugins": [{ "name": "sql-monitor", "source": "./" }]
+}
