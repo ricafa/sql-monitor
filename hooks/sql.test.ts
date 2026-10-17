@@ -38,3 +38,37 @@ test('acha o erro do Oracle e o efeito', () => {
   expect(effectIn('\n3 rows updated.\n\nCommit complete.')).toBe('3 rows updated')
 })
 
+
+test('ignora a criação de procedure, inclusive os comandos do corpo', () => {
+  const sql = sqlFromShell(`docker exec -i lqs-oracle sqlplus -s u/p@FREEPDB1 <<'SQL'
+CREATE OR REPLACE PROCEDURE aumenta_sal(p_dept NUMBER) AS
+  v_total NUMBER;
+BEGIN
+  SELECT COUNT(*) INTO v_total FROM emp WHERE deptno = p_dept;
+  UPDATE emp SET sal = sal + 1 WHERE deptno = p_dept;
+  COMMIT;
+END;
+/
+SELECT ename FROM emp WHERE deptno = 10;
+SQL`)
+  expect(sql).toEqual(['SELECT ename FROM emp WHERE deptno = 10'])
+})
+
+test('ignora trigger, view, sinônimo, blocos anônimos e a execução de procedures', () => {
+  const run = (sql: string) => sqlFromShell(`sqlplus -s u/p@db <<'SQL'\n${sql}\nSQL`)
+  expect(run('CREATE OR REPLACE TRIGGER trg BEFORE INSERT ON emp FOR EACH ROW\nBEGIN\n  :new.sal := 0;\nEND;\n/')).toEqual([])
+  expect(run('CREATE OR REPLACE FORCE VIEW v_emp AS SELECT ename FROM emp;')).toEqual([])
+  expect(run('DROP VIEW v_emp;')).toEqual([])
+  expect(run('DROP TRIGGER trg;')).toEqual([])
+  expect(run('CREATE PUBLIC SYNONYM e FOR emp;')).toEqual([])
+  expect(run('BEGIN aumenta_sal(20); END;\n/')).toEqual([])
+  expect(run('EXEC aumenta_sal(20);')).toEqual([])
+  expect(run('DECLARE\n  n NUMBER;\nBEGIN\n  UPDATE emp SET sal = 1;\nEND;\n/')).toEqual([])
+})
+
+test('mantém tabelas e transações com BEGIN', () => {
+  expect(sqlFromShell('psql -c "BEGIN; UPDATE emp SET sal = 1 WHERE empno = 1; COMMIT;"')).toEqual([
+    'UPDATE emp SET sal = 1 WHERE empno = 1',
+  ])
+  expect(sqlFromShell(`sqlplus -s u/p@db <<'SQL'\nCREATE TABLE tmp (id NUMBER);\nSQL`)).toEqual(['CREATE TABLE tmp (id NUMBER)'])
+})
