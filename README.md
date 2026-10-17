@@ -18,7 +18,7 @@ No terminal do Claude Code:
 /plugin install sql-monitor --marketplace ricafa/sql-monitor
 ```
 
-Responda `y` para adicionar o marketplace e escolha o escopo de usuário. Como o repositório é privado, o git da máquina precisa ter acesso a ele (por exemplo, `gh auth login`).
+Responda `y` para adicionar o marketplace e escolha o escopo de usuário.
 
 ## Desenvolver
 
