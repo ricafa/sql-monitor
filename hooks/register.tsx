@@ -131,7 +131,7 @@ export const register: Register = on => {
           <Text> </Text>
           <Button
             key="alteracoes"
-            label={`Só alterações (${changes})`}
+            label={`Alterações (${changes})`}
             hotkey="a"
             variant={isFiltered ? 'primary' : 'secondary'}
             onPress={() => update($, onlyChanges, () => true)}
