@@ -83,6 +83,76 @@ export function failureIn(output: string): string | undefined {
     ?.trim()
 }
 
+type Verb = 'select' | 'insert' | 'update' | 'delete' | 'merge'
+type Count = { verb: Verb | 'any'; count: number }
+
+const SQLPLUS_VERB: Record<string, Verb> = {
+  selected: 'select',
+  inserted: 'insert',
+  created: 'insert',
+  updated: 'update',
+  deleted: 'delete',
+  merged: 'merge',
+}
+
+// Mensagens de linhas afetadas, na ordem da saída:
+// sqlplus "3 rows updated." / "no rows selected", psql "UPDATE 3" / "INSERT 0 1" / "(3 rows)",
+// mysql "Query OK, 3 rows affected" / "3 rows in set" / "Empty set", sqlcmd "(3 rows affected)".
+const COUNT =
+  /\b(\d+|no)\s+rows?\s+(selected|inserted|created|updated|deleted|merged)\b|^\s*(SELECT|UPDATE|DELETE|MERGE)\s+(\d+)\s*$|^\s*INSERT\s+\d+\s+(\d+)\s*$|\b(\d+)\s+rows?\s+in\s+set\b|\b(Empty set)\b|Query OK,\s+(\d+)\s+rows?\s+affected|^\s*\((\d+)\s+rows?\)\s*$|^\s*\((\d+)\s+rows?\s+affected\)\s*$/gim
+
+function countsIn(output: string): Count[] {
+  const found: Count[] = []
+  for (const m of output.matchAll(COUNT)) {
+    const sqlplus = m[2] ? SQLPLUS_VERB[m[2].toLowerCase()] : undefined
+    if (sqlplus) found.push({ verb: sqlplus, count: m[1]?.toLowerCase() === 'no' ? 0 : Number(m[1]) })
+    else if (m[3]) found.push({ verb: m[3].toLowerCase() as Verb, count: Number(m[4]) })
+    else if (m[5]) found.push({ verb: 'insert', count: Number(m[5]) })
+    else if (m[6]) found.push({ verb: 'select', count: Number(m[6]) })
+    else if (m[7]) found.push({ verb: 'select', count: 0 })
+    else if (m[8]) found.push({ verb: 'any', count: Number(m[8]) })
+    else if (m[9]) found.push({ verb: 'select', count: Number(m[9]) })
+    else if (m[10]) found.push({ verb: 'any', count: Number(m[10]) })
+  }
+  return found
+}
+
+function verbOf(sql: string): Verb | undefined {
+  const word = /^\s*(\w+)/.exec(sql)?.[1]?.toLowerCase()
+  if (word === 'with') return 'select'
+  return word === 'select' || word === 'insert' || word === 'update' || word === 'delete' || word === 'merge'
+    ? word
+    : undefined
+}
+
+/**
+ * Linhas afetadas de cada comando, na ordem, ou null quando a saída não diz com certeza.
+ *
+ * Cada tipo de comando só recebe números quando há uma mensagem para cada comando
+ * daquele tipo: o sqlplus não imprime "N rows selected." abaixo de 6 linhas, e um
+ * número na linha errada seria pior que nenhum.
+ */
+export function rowCounts(statements: readonly string[], output: string): (number | null)[] {
+  const verbs = statements.map(verbOf)
+  const counts = countsIn(output)
+  const result: (number | null)[] = statements.map(() => null)
+
+  for (const verb of new Set(verbs)) {
+    if (!verb) continue
+    const at = verbs.flatMap((one, index) => (one === verb ? [index] : []))
+    const own = counts.filter(one => one.verb === verb)
+    if (own.length === at.length) at.forEach((index, n) => (result[index] = own[n]?.count ?? null))
+  }
+
+  const generic = counts.filter(one => one.verb === 'any')
+  const open = verbs.flatMap((one, index) => (one && result[index] === null ? [index] : []))
+  if (generic.length > 0 && generic.length === open.length && counts.length === generic.length) {
+    open.forEach((index, n) => (result[index] = generic[n]?.count ?? null))
+  }
+
+  return result
+}
+
 /** Resumo do efeito, como "3 rows updated" ou "Table created.". */
 export function effectIn(output: string): string | undefined {
   const match =

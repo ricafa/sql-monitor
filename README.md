@@ -8,7 +8,32 @@ Mod do Claude Code que registra o SQL que a IA executa.
 
 Detecta SQL em comandos de Bash e PowerShell que chamam um cliente de banco (`sqlplus`, `sqlcl`, `docker exec`, `psql`, `sqlcmd`, `sqlite3`...) e em ferramentas MCP com campos `sql`, `query` ou `statement`. Código PL/SQL (procedures, functions, packages, triggers, types e qualquer bloco começado em `BEGIN`, inclusive o de transação), views e sinônimos não entram no monitor, nem a execução de procedures. Para saber se falhou, procura também `ORA-`, `PLS-`, `SP2-` e `ERROR at line` na saída, porque o `sqlplus` sai com código 0 mesmo com erro.
 
-O histórico guarda as 200 execuções mais recentes e fica no store do plugin, em cada computador.
+## Histórico em SQLite
+
+Cada comando SQL vira uma linha da tabela `execucoes` em `~/.claude/sql-monitor/historico.db`, gravada quando a execução termina, já com o resultado. O banco é criado sozinho e guarda tudo; o painel mostra as 200 execuções mais recentes.
+
+| coluna | conteúdo |
+|---|---|
+| `id` | id da chamada da ferramenta (com `:n` quando um comando tem vários SQL) |
+| `executado_em` | data e hora em ISO 8601 (UTC) |
+| `ferramenta` | `Bash`, `PowerShell` ou a ferramenta MCP |
+| `sql` | o comando |
+| `tipo` | `consulta` ou `alteração` |
+| `status` | `sucesso` ou `falha` |
+| `detalhe` | a linha do erro ou o efeito (`1 row updated`) |
+| `linhas_afetadas` | linhas afetadas ou retornadas; `NULL` quando a saída não diz com certeza |
+| `projeto` | pasta da sessão |
+| `sessao` | id da sessão do Claude Code |
+
+```
+sqlite3 ~/.claude/sql-monitor/historico.db "SELECT executado_em, status, linhas_afetadas, sql FROM execucoes WHERE tipo = 'alteração'"
+```
+
+As linhas afetadas saem das mensagens do cliente (`3 rows updated.` no sqlplus, `UPDATE 3` no psql, `Query OK, 3 rows affected` no mysql, `(3 rows affected)` no sqlcmd). O sqlplus só escreve `N rows selected.` a partir de 6 linhas, então um SELECT menor fica com `NULL`.
+
+Requer o `sqlite3` no PATH. Sem ele, o mod avisa uma vez e o histórico fica só na sessão. O banco é de cada computador; não o coloque numa pasta sincronizada (OneDrive, Dropbox), porque a sincronização pode corromper o SQLite.
+
+`/sql-monitor limpar` apaga também o banco.
 
 ## Instalar
 

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { effectIn, failureIn, kindOf, sqlFromFields, sqlFromShell } from './sql'
+import { effectIn, failureIn, kindOf, rowCounts, sqlFromFields, sqlFromShell } from './sql'
 
 test('acha a consulta num sqlplus via docker', () => {
   const sql = sqlFromShell(
@@ -78,4 +78,28 @@ SQL`)).toEqual([
     'SELECT ename FROM emp',
   ])
   expect(sqlFromShell(`sqlplus -s u/p@db <<'SQL'\nCREATE TABLE tmp (id NUMBER);\nSQL`)).toEqual(['CREATE TABLE tmp (id NUMBER)'])
+})
+
+test('conta as linhas afetadas pela saída de cada cliente', () => {
+  expect(rowCounts(['UPDATE emp SET sal = 1'], '\n3 rows updated.\n\nCommit complete.')).toEqual([3])
+  expect(rowCounts(['INSERT INTO t VALUES (1)'], '1 row created.')).toEqual([1])
+  expect(rowCounts(['SELECT * FROM emp'], 'no rows selected')).toEqual([0])
+  expect(rowCounts(['SELECT * FROM emp'], '...\n\n14 rows selected.')).toEqual([14])
+  expect(rowCounts(['UPDATE emp SET sal = 1'], 'UPDATE 3')).toEqual([3])
+  expect(rowCounts(['INSERT INTO t VALUES (1)'], 'INSERT 0 1')).toEqual([1])
+  expect(rowCounts(['DELETE FROM t'], 'Query OK, 2 rows affected (0.01 sec)')).toEqual([2])
+  expect(rowCounts(['DELETE FROM t'], '\n(4 rows affected)\n')).toEqual([4])
+  expect(rowCounts(['SELECT 1 FROM t'], ' a\n---\n 1\n(1 row)\n')).toEqual([1])
+})
+
+test('deixa null quando não há certeza', () => {
+  // SELECT de 5 linhas no sqlplus não imprime a contagem; o UPDATE ainda recebe a sua.
+  expect(rowCounts(['SELECT * FROM emp', 'UPDATE emp SET sal = 1'], 'EMPNO\n----\n7369\n\n1 row updated.')).toEqual([
+    null,
+    1,
+  ])
+  // Dois SELECTs e uma contagem só: não dá para saber de qual é.
+  expect(rowCounts(['SELECT * FROM a', 'SELECT * FROM b'], '12 rows selected.')).toEqual([null, null])
+  expect(rowCounts(['CREATE TABLE t (id NUMBER)'], 'Table created.')).toEqual([null])
+  expect(rowCounts(['UPDATE emp SET sal = 1', 'DELETE FROM t'], '2 rows updated.\n\n5 rows deleted.')).toEqual([2, 5])
 })
