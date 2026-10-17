@@ -10,11 +10,12 @@ const STATEMENT =
 
 const CHANGE = /^(insert|update|delete|merge|create|alter|drop|truncate|rename|grant|revoke|comment)\b/i
 
-// Código PL/SQL (procedure, function, package, trigger, type e blocos anônimos) não entra
+// Código PL/SQL (procedure, function, package, trigger, type e blocos anônimos) e qualquer
+// bloco começado em BEGIN, inclusive o de transação (`BEGIN; ... COMMIT;`), não entram
 // no monitor. O corpo vai até a `/` sozinha numa linha, como no sqlplus, e sai inteiro,
 // para os comandos de dentro dele não aparecerem soltos.
 const PLSQL =
-  /\b(?:create\s+(?:or\s+replace\s+)?(?:(?:editionable|noneditionable)\s+)?(?:procedure|function|package(?:\s+body)?|trigger|type(?:\s+body)?)\b|declare\b|begin\b(?!\s*(?:transaction|work|tran)?\s*;))[\s\S]*?(?:^[ \t]*\/[ \t]*$|(?![\s\S]))/gim
+  /\b(?:create\s+(?:or\s+replace\s+)?(?:(?:editionable|noneditionable)\s+)?(?:procedure|function|package(?:\s+body)?|trigger|type(?:\s+body)?)\b|declare\b|begin\b)[\s\S]*?(?:^[ \t]*\/[ \t]*$|(?![\s\S]))/gim
 
 // Nem a criação, alteração ou remoção desses objetos, de views e de sinônimos.
 const IGNORED =

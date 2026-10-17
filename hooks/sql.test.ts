@@ -66,9 +66,16 @@ test('ignora trigger, view, sinônimo, blocos anônimos e a execução de proced
   expect(run('DECLARE\n  n NUMBER;\nBEGIN\n  UPDATE emp SET sal = 1;\nEND;\n/')).toEqual([])
 })
 
-test('mantém tabelas e transações com BEGIN', () => {
-  expect(sqlFromShell('psql -c "BEGIN; UPDATE emp SET sal = 1 WHERE empno = 1; COMMIT;"')).toEqual([
-    'UPDATE emp SET sal = 1 WHERE empno = 1',
+test('ignora blocos de transação começados em BEGIN e mantém tabelas', () => {
+  expect(sqlFromShell('psql -c "BEGIN; UPDATE emp SET sal = 1 WHERE empno = 1; COMMIT;"')).toEqual([])
+  expect(sqlFromShell(`sqlplus -s u/p@db <<'SQL'
+BEGIN
+  UPDATE emp SET sal = 1;
+END;
+/
+SELECT ename FROM emp;
+SQL`)).toEqual([
+    'SELECT ename FROM emp',
   ])
   expect(sqlFromShell(`sqlplus -s u/p@db <<'SQL'\nCREATE TABLE tmp (id NUMBER);\nSQL`)).toEqual(['CREATE TABLE tmp (id NUMBER)'])
 })

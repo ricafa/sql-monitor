@@ -6,7 +6,7 @@ Mod do Claude Code que registra o SQL que a IA executa.
 - `/sql-monitor` abre um painel com o histórico, com filtro para ver só as alterações.
 - `/sql-monitor limpar` apaga o histórico.
 
-Detecta SQL em comandos de Bash e PowerShell que chamam um cliente de banco (`sqlplus`, `sqlcl`, `docker exec`, `psql`, `sqlcmd`, `sqlite3`...) e em ferramentas MCP com campos `sql`, `query` ou `statement`. Código PL/SQL (procedures, functions, packages, triggers, types e blocos anônimos), views e sinônimos não entram no monitor, nem a execução de procedures. Para saber se falhou, procura também `ORA-`, `PLS-`, `SP2-` e `ERROR at line` na saída, porque o `sqlplus` sai com código 0 mesmo com erro.
+Detecta SQL em comandos de Bash e PowerShell que chamam um cliente de banco (`sqlplus`, `sqlcl`, `docker exec`, `psql`, `sqlcmd`, `sqlite3`...) e em ferramentas MCP com campos `sql`, `query` ou `statement`. Código PL/SQL (procedures, functions, packages, triggers, types e qualquer bloco começado em `BEGIN`, inclusive o de transação), views e sinônimos não entram no monitor, nem a execução de procedures. Para saber se falhou, procura também `ORA-`, `PLS-`, `SP2-` e `ERROR at line` na saída, porque o `sqlplus` sai com código 0 mesmo com erro.
 
 O histórico guarda as 200 execuções mais recentes e fica no store do plugin, em cada computador.
 
