@@ -214,3 +214,135 @@ export function formatSql(sql: string): Line[] {
 export function plainText(lines: readonly Line[]): string {
   return lines.map(one => ' '.repeat(one.indent) + one.parts.map(part => part.text).join('')).join('\n')
 }
+
+/** Tira as linhas em branco das pontas e o recuo comum a todas as linhas. */
+function dedent(lines: readonly string[]): string {
+  const filled = lines.filter(one => one.trim())
+  if (filled.length === 0) return ''
+  const common = Math.min(...filled.map(one => /^ */.exec(one)?.[0].length ?? 0))
+  const first = lines.findIndex(one => one.trim())
+  const last = lines.length - [...lines].reverse().findIndex(one => one.trim())
+  return lines
+    .slice(first, last)
+    .map(one => one.slice(common))
+    .join('\n')
+}
+
+const BLOCK_OPENERS = new Set(['FOR', 'WHILE', 'LOOP'])
+const DML = /^(select|insert|update|delete|merge|with)\b/i
+
+/**
+ * Mostra um bloco PL/SQL (BEGIN, DECLARE, procedure, trigger...) recuado.
+ *
+ * Um bloco que já vem em várias linhas só perde o recuo comum: quem o escreveu já o
+ * organizou. Um bloco corrido numa linha ou duas é quebrado depois de cada `;`, de
+ * BEGIN, THEN, ELSE e LOOP, e o recuo segue o BEGIN/END, o IF/END IF e o LOOP/END LOOP.
+ * Os comandos SQL de dentro saem formatados como no resto do painel.
+ */
+export function formatBlock(text: string): string {
+  const lines = text
+    .replace(/\t/g, '  ')
+    .split(/\r?\n/)
+    .map(one => one.replace(/\s+$/, ''))
+  if (lines.filter(one => one.trim()).length >= 3 || /--/.test(text)) return dedent(lines)
+
+  const tokens = merge(tokenize(text))
+  const out: string[] = []
+  let run: Token[] = []
+  let depth = 0
+  let inDeclare = false
+  let cases = 0
+  let parens = 0
+
+  const flush = () => {
+    if (run.length === 0) return
+    const sql = run.map((one, i) => (i > 0 && one.space ? ' ' : '') + one.text).join('')
+    const pad = '  '.repeat(depth)
+    if (DML.test(sql)) {
+      const body = sql.replace(/;$/, '')
+      const shown = plainText(formatSql(body)).split('\n')
+      shown.forEach((one, i) => out.push(pad + one + (i === shown.length - 1 && sql.endsWith(';') ? ';' : '')))
+    } else {
+      out.push(pad + sql)
+    }
+    run = []
+  }
+  const down = () => (depth = Math.max(0, depth - 1))
+
+  tokens.forEach((token, i) => {
+    const key = token.isWord ? token.key : ''
+    const start = run[0]?.key ?? ''
+    const isStart = run.length === 0
+    if (token.text === '(') parens++
+    if (token.text === ')') parens = Math.max(0, parens - 1)
+
+    if (parens > 0) {
+      run.push(token)
+      return
+    }
+    if (key === 'CASE') {
+      if (tokens[i - 1]?.key !== 'END') cases++
+      run.push(token)
+    } else if (key === 'END' && cases > 0) {
+      cases--
+      run.push(token)
+    } else if (cases > 0) {
+      run.push(token)
+    } else if (token.text === '/' && isStart) {
+      out.push('/')
+    } else if (token.text === ';') {
+      run.push(token)
+      flush()
+    } else if (key === 'END' && isStart) {
+      down()
+      run.push(token)
+    } else if ((key === 'ELSE' || key === 'ELSIF') && isStart) {
+      down()
+      run.push(token)
+      if (key === 'ELSE') {
+        flush()
+        depth++
+      }
+    } else if (key === 'EXCEPTION' && isStart) {
+      down()
+      run.push(token)
+      flush()
+      depth++
+    } else if (key === 'DECLARE' && isStart) {
+      run.push(token)
+      flush()
+      depth++
+      inDeclare = true
+    } else if (key === 'BEGIN' && isStart) {
+      const next = tokens[i + 1]
+      if (next?.text === ';' || next?.key === 'TRANSACTION' || next?.key === 'WORK') {
+        run.push(token)
+        return
+      }
+      if (inDeclare) {
+        down()
+        inDeclare = false
+      }
+      run.push(token)
+      flush()
+      depth++
+    } else if (key === 'THEN' && ['IF', 'ELSIF', 'WHEN'].includes(start)) {
+      run.push(token)
+      flush()
+      if (start !== 'WHEN') depth++
+    } else if (key === 'LOOP' && (isStart || BLOCK_OPENERS.has(start))) {
+      run.push(token)
+      flush()
+      depth++
+    } else if ((key === 'IS' || key === 'AS') && start === 'CREATE' && !inDeclare && depth === 0) {
+      run.push(token)
+      flush()
+      depth++
+      inDeclare = true
+    } else {
+      run.push(token)
+    }
+  })
+  flush()
+  return out.join('\n')
+}

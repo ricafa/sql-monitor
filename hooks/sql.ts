@@ -54,6 +54,29 @@ export function statementsIn(text: string): string[] {
   return found
 }
 
+/**
+ * Blocos de código PL/SQL de um texto (BEGIN, DECLARE, procedure, function, package,
+ * trigger, type), que o monitor não lista mas que podem alterar dados: pedem autorização.
+ */
+export function blocksIn(text: string): string[] {
+  const plain = text.replace(/\\[nrt]/g, '\n')
+  return [...plain.matchAll(PLSQL)]
+    .map(one => one[0].replace(/^[ \t]*\/[ \t]*$/m, '').replace(/[\s"'`]+$/, '').trim())
+    .filter(Boolean)
+}
+
+/** Blocos PL/SQL de um comando de shell, só quando ele chama um cliente de banco. */
+export function blocksFromShell(command: string): string[] {
+  return CLIENT.test(command) ? blocksIn(command) : []
+}
+
+/** Blocos PL/SQL dos campos de texto de uma ferramenta MCP (sql, query, statement...). */
+export function blocksFromFields(input: Record<string, unknown>): string[] {
+  return Object.entries(input).flatMap(([key, value]) =>
+    typeof value === 'string' && /sql|query|statement/i.test(key) ? blocksIn(value) : [],
+  )
+}
+
 /** SQL de um comando de shell, só quando ele chama um cliente de banco. */
 export function sqlFromShell(command: string): string[] {
   return CLIENT.test(command) ? statementsIn(command) : []

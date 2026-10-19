@@ -1,6 +1,6 @@
 ﻿{
   "name": "sql-monitor",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "author": { "name": "Ricardo CF" },
   "description": "Registra as consultas SQL que a IA executa e mostra se deram certo e se alteraram tabelas",
   "types": "./types/index.d.ts"

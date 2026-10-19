@@ -1,6 +1,16 @@
 import { expect, test } from 'claude-code/testing'
 
-import { effectIn, failureIn, kindOf, needsApproval, rowCounts, sqlFromFields, sqlFromShell } from './sql'
+import {
+  blocksFromFields,
+  blocksFromShell,
+  effectIn,
+  failureIn,
+  kindOf,
+  needsApproval,
+  rowCounts,
+  sqlFromFields,
+  sqlFromShell,
+} from './sql'
 
 test('acha a consulta num sqlplus via docker', () => {
   const sql = sqlFromShell(
@@ -115,4 +125,15 @@ test('pede autorização só para INSERT, UPDATE, DELETE e MERGE', () => {
   expect(needsApproval('WITH x AS (SELECT last_update FROM t) SELECT * FROM x')).toBe(false)
   expect(needsApproval('CREATE TABLE t (id NUMBER)')).toBe(false)
   expect(needsApproval('TRUNCATE TABLE t')).toBe(false)
+})
+
+test('acha os blocos PL/SQL que o monitor não lista', () => {
+  expect(blocksFromShell("sqlplus -s u/p@db <<'SQL'\nBEGIN\n  UPDATE emp SET sal = 1;\nEND;\n/\nSQL")).toEqual([
+    'BEGIN\n  UPDATE emp SET sal = 1;\nEND;',
+  ])
+  expect(blocksFromFields({ sql: 'CREATE OR REPLACE PROCEDURE p AS BEGIN NULL; END;' })).toEqual([
+    'CREATE OR REPLACE PROCEDURE p AS BEGIN NULL; END;',
+  ])
+  expect(blocksFromFields({ sql: 'SELECT * FROM emp', query: 'UPDATE emp SET sal = 1' })).toEqual([])
+  expect(blocksFromShell('git commit -m "begin: nova tela"')).toEqual([])
 })

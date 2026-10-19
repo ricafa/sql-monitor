@@ -3,9 +3,19 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { SqlRun } from '../types'
 import { CLEAR, RECENT, SCHEMA, fromJson, isoFrom, upsert } from './db'
-import { formatSql, plainText } from './format'
+import { formatBlock, formatSql, plainText } from './format'
 import type { Line, PartKind } from './format'
-import { effectIn, failureIn, kindOf, needsApproval, rowCounts, sqlFromFields, sqlFromShell } from './sql'
+import {
+  blocksFromFields,
+  blocksFromShell,
+  effectIn,
+  failureIn,
+  kindOf,
+  needsApproval,
+  rowCounts,
+  sqlFromFields,
+  sqlFromShell,
+} from './sql'
 
 const PANE = 'sql-monitor'
 const runs = atom({ plugin: 'sql-monitor', key: 'runs' } as const, [])
@@ -99,18 +109,45 @@ function sqlOf(input: Record<string, unknown>): string[] {
   return tool.startsWith('mcp__') ? sqlFromFields(input) : []
 }
 
+function blocksOf(input: Record<string, unknown>): string[] {
+  const tool = String(input.tool)
+  if (tool === 'Bash' || tool === 'PowerShell') {
+    return typeof input.command === 'string' ? blocksFromShell(input.command) : []
+  }
+  return tool.startsWith('mcp__') ? blocksFromFields(input) : []
+}
+
 function short(text: string, size: number): string {
   return text.length > size ? `${text.slice(0, size - 1)}…` : text
 }
 
-/** Pergunta ao usuário antes de INSERT/UPDATE/DELETE/MERGE; devolve o motivo da negativa, ou undefined se autorizou. */
-async function askApproval($: EngineInterface, tool: string, statements: readonly string[]): Promise<string | undefined> {
+/**
+ * Pergunta ao usuário antes de INSERT/UPDATE/DELETE/MERGE e de qualquer bloco PL/SQL;
+ * devolve o motivo da negativa, ou undefined se autorizou.
+ */
+async function askApproval(
+  $: EngineInterface,
+  tool: string,
+  statements: readonly string[],
+  blocks: readonly string[],
+): Promise<string | undefined> {
   const dml = statements.filter(needsApproval)
-  if (dml.length === 0) return undefined
-  const sql = dml.map(one => plainText(formatSql(one))).join('\n\n')
-  const question = `${tool} quer executar ${dml.length === 1 ? 'esta alteração' : `${dml.length} alterações`}:\n\n${short(sql, 800)}\n\nAutorizar?`
-  const answer = await $.ui.ask(question, { options: [APPROVE, 'Negar'], header: 'Alterar dados' }).catch(() => undefined)
-  return answer === APPROVE ? undefined : 'Alteração de dados negada pelo usuário no SQL Monitor.'
+  if (dml.length === 0 && blocks.length === 0) return undefined
+  const shown = [
+    ...dml.map(one => plainText(formatSql(one))),
+    ...blocks.map(one => formatBlock(one)),
+  ].join('\n\n')
+  const what = [
+    dml.length > 0 ? (dml.length === 1 ? 'uma alteração' : `${dml.length} alterações`) : '',
+    blocks.length > 0 ? (blocks.length === 1 ? 'um bloco PL/SQL' : `${blocks.length} blocos PL/SQL`) : '',
+  ]
+    .filter(Boolean)
+    .join(' e ')
+  const question = `${tool} quer executar ${what}:\n\n${short(shown, 1500)}\n\nAutorizar?`
+  const answer = await $.ui
+    .ask(question, { options: [APPROVE, 'Negar'], header: 'Autorização' })
+    .catch(() => undefined)
+  return answer === APPROVE ? undefined : 'Execução de SQL negada pelo usuário no SQL Monitor.'
 }
 
 function mark(run: SqlRun): string {
@@ -158,8 +195,13 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
-    const statements = sqlOf(e as unknown as Record<string, unknown>)
-    if (statements.length === 0) return next(e)
+    const input = e as unknown as Record<string, unknown>
+    const statements = sqlOf(input)
+    const blocks = blocksOf(input)
+    if (statements.length === 0) {
+      const refused = await askApproval($, String(e.tool), [], blocks)
+      return refused ? { deny: refused } : next(e)
+    }
 
     const base = e.tool_use_id ?? `${Date.now()}`
     const at = new Date().toISOString()
@@ -173,7 +215,7 @@ export const register: Register = on => {
     }))
     await update($, runs, list => [...list, ...pending].slice(-LIMIT))
 
-    const denied = await askApproval($, String(e.tool), statements)
+    const denied = await askApproval($, String(e.tool), statements, blocks)
     const ran: Awaited<ReturnType<typeof next>> = denied ? { deny: denied } : await next(e)
 
     const output = ran.text ?? ''
@@ -208,7 +250,8 @@ export const register: Register = on => {
     if (next.called) return next(e)
     let isDml = false
     try {
-      isDml = sqlOf(e as unknown as Record<string, unknown>).some(needsApproval)
+      const input = e as unknown as Record<string, unknown>
+      isDml = sqlOf(input).some(needsApproval) || blocksOf(input).length > 0
     } catch {
       isDml = false
     }
