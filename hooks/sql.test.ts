@@ -103,3 +103,27 @@ test('deixa null quando não há certeza', () => {
   expect(rowCounts(['CREATE TABLE t (id NUMBER)'], 'Table created.')).toEqual([null])
   expect(rowCounts(['UPDATE emp SET sal = 1', 'DELETE FROM t'], '2 rows updated.\n\n5 rows deleted.')).toEqual([2, 5])
 })
+
+test('um SQL entre aspas termina onde elas fecham, sem levar o código do comando junto', () => {
+  expect(
+    sqlFromShell(`sqlite3 -json db.sqlite "SELECT id, sql FROM execucoes ORDER BY executado_em DESC LIMIT 4" | python -c "import json,sys\nfor r in json.load(sys.stdin): print(r['sql'])"`),
+  ).toEqual(['SELECT id, sql FROM execucoes ORDER BY executado_em DESC LIMIT 4'])
+
+  expect(
+    sqlFromShell(`python -I - <<'PY'\nimport sqlite3\nc = sqlite3.connect('x.db')\nfor r in c.execute("SELECT a, b FROM t LIMIT 4"):\n    print(r)\nPY`),
+  ).toEqual(['SELECT a, b FROM t LIMIT 4'])
+
+  expect(sqlFromShell(`sqlplus -s u/p@db <<< 'select 1 from dual' && echo pronto`)).toEqual(['select 1 from dual'])
+})
+
+test('aspas simples dentro de aspas duplas fazem parte do SQL', () => {
+  expect(sqlFromShell(`sqlite3 db "SELECT * FROM t WHERE nome = 'x' AND ativo = 1" | head -3`)).toEqual([
+    "SELECT * FROM t WHERE nome = 'x' AND ativo = 1",
+  ])
+})
+
+test('sem aspas ao redor, nada é cortado', () => {
+  expect(sqlFromShell(`sqlplus -s u/p@db <<EOF\nselect ename from emp where deptno = 10;\nEOF`)).toEqual([
+    'select ename from emp where deptno = 10',
+  ])
+})

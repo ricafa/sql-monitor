@@ -35,17 +35,55 @@ function unclosed(sql: string): string {
   return text.trim()
 }
 
-/** Separa os comandos SQL de um texto, no `;` ou na `/` sozinha numa linha. */
-export function statementsIn(text: string): string[] {
+/** A aspa de shell (`'` ou `"`) que envolve a posição, ou '' fora de aspas. Dentro de `"`, o `'` não conta. */
+function enclosingQuote(text: string, index: number): string {
+  let quote = ''
+  for (let i = 0; i < index; i++) {
+    const char = text[i]
+    if (char === '\\' && quote !== "'") i++
+    else if (quote === '') quote = char === '"' || char === "'" ? char : ''
+    else if (char === quote) quote = ''
+  }
+  return quote
+}
+
+/** Onde a aspa `quote`, aberta antes de `from`, fecha; o fim do texto se não fechar. */
+function quoteEnd(text: string, from: number, quote: string): number {
+  for (let i = from; i < text.length; i++) {
+    if (text[i] === '\\' && quote !== "'") i++
+    else if (text[i] === quote) return i
+  }
+  return text.length
+}
+
+/**
+ * Separa os comandos SQL de um texto, no `;` ou na `/` sozinha numa linha.
+ *
+ * Num comando de shell (`isShell`), um SQL que começa dentro de aspas termina onde elas fecham:
+ * `sqlite3 db "SELECT 1" | python -c "..."` não leva o código Python junto.
+ */
+export function statementsIn(text: string, isShell = false): string[] {
   const found: string[] = []
   // `\n` e `\t` escritos dentro de um printf/echo grudam na palavra seguinte ("\nSELECT").
   const plain = text.replace(/\\[nrt]/g, '\n').replace(PLSQL, '\n')
-  for (const chunk of plain.split(/;|^\s*\/\s*$/m)) {
-    const match = STATEMENT.exec(chunk)
+  const chunks: { text: string; offset: number }[] = []
+  let start = 0
+  for (const delimiter of plain.matchAll(/;|^\s*\/\s*$/gm)) {
+    chunks.push({ text: plain.slice(start, delimiter.index ?? 0), offset: start })
+    start = (delimiter.index ?? 0) + delimiter[0].length
+  }
+  chunks.push({ text: plain.slice(start), offset: start })
+
+  for (const chunk of chunks) {
+    const match = STATEMENT.exec(chunk.text)
     if (!match) continue
+    let body = chunk.text.slice(match.index)
+    if (isShell) {
+      const quote = enclosingQuote(plain, chunk.offset + match.index)
+      if (quote) body = body.slice(0, quoteEnd(body, 0, quote))
+    }
     const sql = unclosed(
-      chunk
-        .slice(match.index)
+      body
         .replace(/\s+/g, ' ')
         .replace(/[\s"'`]+$/, ''),
     )
@@ -56,7 +94,7 @@ export function statementsIn(text: string): string[] {
 
 /** SQL de um comando de shell, só quando ele chama um cliente de banco. */
 export function sqlFromShell(command: string): string[] {
-  return CLIENT.test(command) ? statementsIn(command) : []
+  return CLIENT.test(command) ? statementsIn(command, true) : []
 }
 
 /** SQL dos campos de texto de uma ferramenta MCP (sql, query, statement...). */
