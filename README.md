@@ -3,7 +3,7 @@
 Mod do Claude Code que registra o SQL que a IA executa.
 
 - Depois de cada execução, mostra um toast com o SQL, se deu certo ou falhou, e se foi só consulta ou se alterou tabela.
-- `/sql-monitor` abre um painel com o histórico, com filtro para ver só as alterações.
+- `/sql-monitor` abre um painel com o histórico, com filtro para ver só as alterações. O SQL aparece recuado, uma cláusula por linha (`SELECT`, `FROM`, `WHERE`, vírgulas e `AND`/`OR` quebram a linha, subconsultas ganham recuo) e colorido: palavras-chave em azul, funções em ciano, strings em verde, números e binds em amarelo, `(+)` em magenta. Cada execução mostra até 12 linhas. A formatação é só de exibição; o histórico e o toast guardam o SQL original.
 - `/sql-monitor limpar` apaga o histórico.
 
 Detecta SQL em comandos de Bash e PowerShell que chamam um cliente de banco (`sqlplus`, `sqlcl`, `docker exec`, `psql`, `sqlcmd`, `sqlite3`...) e em ferramentas MCP com campos `sql`, `query` ou `statement`. Código PL/SQL (procedures, functions, packages, triggers, types e qualquer bloco começado em `BEGIN`, inclusive o de transação), views e sinônimos não entram no monitor, nem a execução de procedures. Para saber se falhou, procura também `ORA-`, `PLS-`, `SP2-` e `ERROR at line` na saída, porque o `sqlplus` sai com código 0 mesmo com erro.

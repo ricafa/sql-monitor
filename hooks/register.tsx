@@ -3,12 +3,26 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { SqlRun } from '../types'
 import { CLEAR, RECENT, SCHEMA, fromJson, isoFrom, upsert } from './db'
+import { formatSql } from './format'
+import type { Line, PartKind } from './format'
 import { effectIn, failureIn, kindOf, rowCounts, sqlFromFields, sqlFromShell } from './sql'
 
 const PANE = 'sql-monitor'
 const runs = atom({ plugin: 'sql-monitor', key: 'runs' } as const, [])
 const onlyChanges = atom({ plugin: 'sql-monitor', key: 'onlyChanges' } as const, false)
 const LIMIT = 200
+/** Linhas do SQL mostradas por execução; o resto vira "… +N linhas". */
+const SQL_LINES = 12
+const COLOR: Record<PartKind, 'blueBright' | 'cyan' | 'green' | 'yellow' | 'magenta' | undefined> = {
+  keyword: 'blueBright',
+  function: 'cyan',
+  string: 'green',
+  number: 'yellow',
+  bind: 'yellow',
+  join: 'magenta',
+  comment: undefined,
+  plain: undefined,
+}
 /** Chave do histórico antigo, de antes do SQLite; migrado e apagado na primeira sessão. */
 const STORED = 'runs'
 
@@ -97,6 +111,11 @@ function lines(rows: number | null | undefined): string | undefined {
   return rows === 1 ? '1 linha' : `${rows} linhas`
 }
 
+function sqlLines(sql: string): { lines: Line[]; hidden: number } {
+  const all = formatSql(sql)
+  return { lines: all.slice(0, SQL_LINES), hidden: Math.max(0, all.length - SQL_LINES) }
+}
+
 function when(at: string): string {
   const date = new Date(at)
   return Number.isNaN(date.getTime()) ? at : date.toLocaleString('pt-BR')
@@ -179,7 +198,17 @@ export const register: Register = on => {
     const list = await read($, runs)
     const isFiltered = await read($, onlyChanges)
     const shown = isFiltered ? list.filter(one => one.kind === 'alteração') : list
-    const room = Math.max(1, Math.floor(((e.viewport?.rows ?? 24) - 3) / 4))
+    // Do mais novo para o mais antigo, enquanto couber: cada execução ocupa a margem, o
+    // cabeçalho, as linhas do SQL e, se houver, o resultado.
+    let free = (e.viewport?.rows ?? 24) - 3
+    const visible: { run: SqlRun; lines: Line[]; hidden: number }[] = []
+    for (const run of [...shown].reverse()) {
+      const sql = sqlLines(run.sql)
+      const height = 2 + sql.lines.length + (sql.hidden > 0 ? 1 : 0) + (run.detail ? 1 : 0)
+      if (visible.length > 0 && height > free) break
+      free -= height
+      visible.push({ run, ...sql })
+    }
     const changes = list.filter(one => one.kind === 'alteração').length
     const failures = list.filter(one => one.status === 'falha').length
 
@@ -208,10 +237,7 @@ export const register: Register = on => {
             {isFiltered ? 'Nenhuma alteração registrada.' : 'Nenhum SQL executado pela IA ainda.'}
           </Text>
         )}
-        {shown
-          .slice(-room)
-          .reverse()
-          .map(run => (
+        {visible.map(({ run, lines: sql, hidden }) => (
             <Box flexDirection="column" marginTop={1}>
               <Text>
                 <Text
@@ -227,7 +253,17 @@ export const register: Register = on => {
                   {when(run.at)} · {run.tool}
                 </Text>
               </Text>
-              <Text>{short(run.sql, 400)}</Text>
+              {sql.map(one => (
+                <Text>
+                  {' '.repeat(one.indent)}
+                  {one.parts.map(part => (
+                    <Text color={COLOR[part.kind]} dimColor={part.kind === 'comment'}>
+                      {part.text}
+                    </Text>
+                  ))}
+                </Text>
+              ))}
+              {hidden > 0 && <Text dimColor>… +{hidden} linhas</Text>}
               {run.detail && <Text dimColor>{run.detail}</Text>}
             </Box>
           ))}
