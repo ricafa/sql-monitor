@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { formatBlock, formatSql, plainText } from './format'
+import { formatSql, plainText } from './format'
 
 const text = (sql: string) => plainText(formatSql(sql))
 
@@ -80,46 +80,4 @@ test('classifica os pedaços', () => {
 test('não trava com SQL incompleto', () => {
   expect(text("SELECT 'aberta FROM t")).toBe("SELECT 'aberta FROM t")
   expect(text('SELECT ) FROM t')).toBe(['SELECT )', 'FROM t'].join('\n'))
-})
-
-const block = (text: string) => formatBlock(text)
-
-test('bloco já em várias linhas só perde o recuo comum', () => {
-  expect(block('    BEGIN\n      UPDATE emp SET sal = 1;\n    END;')).toBe('BEGIN\n  UPDATE emp SET sal = 1;\nEND;')
-})
-
-test('bloco corrido numa linha é quebrado e recuado', () => {
-  expect(block("BEGIN UPDATE emp SET sal = 1 WHERE id = 2; IF SQL%ROWCOUNT = 0 THEN RAISE_APPLICATION_ERROR(-20001, 'x;y'); END IF; COMMIT; END;")).toBe(
-    [
-      'BEGIN',
-      '  UPDATE emp',
-      '  SET sal = 1',
-      '  WHERE id = 2;',
-      '  IF SQL%ROWCOUNT = 0 THEN',
-      "    RAISE_APPLICATION_ERROR(-20001, 'x;y');",
-      '  END IF;',
-      '  COMMIT;',
-      'END;',
-    ].join('\n'),
-  )
-})
-
-test('DECLARE, EXCEPTION e CASE dentro do bloco', () => {
-  expect(block("DECLARE n NUMBER; BEGIN SELECT CASE WHEN a = 1 THEN 'x' ELSE 'y' END INTO n FROM t; EXCEPTION WHEN OTHERS THEN ROLLBACK; END;")).toBe(
-    [
-      'DECLARE',
-      '  n NUMBER;',
-      'BEGIN',
-      "  SELECT CASE WHEN a = 1 THEN 'x' ELSE 'y' END INTO n",
-      '  FROM t;',
-      'EXCEPTION',
-      '  WHEN OTHERS THEN',
-      '  ROLLBACK;',
-      'END;',
-    ].join('\n'),
-  )
-})
-
-test('BEGIN de transação não abre recuo', () => {
-  expect(block('BEGIN; UPDATE emp SET sal = 1; COMMIT;')).toBe(['BEGIN;', 'UPDATE emp', 'SET sal = 1;', 'COMMIT;'].join('\n'))
 })

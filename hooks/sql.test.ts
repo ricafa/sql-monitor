@@ -1,16 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import {
-  blocksFromFields,
-  blocksFromShell,
-  effectIn,
-  failureIn,
-  kindOf,
-  needsApproval,
-  rowCounts,
-  sqlFromFields,
-  sqlFromShell,
-} from './sql'
+import { effectIn, failureIn, kindOf, rowCounts, sqlFromFields, sqlFromShell } from './sql'
 
 test('acha a consulta num sqlplus via docker', () => {
   const sql = sqlFromShell(
@@ -112,28 +102,4 @@ test('deixa null quando não há certeza', () => {
   expect(rowCounts(['SELECT * FROM a', 'SELECT * FROM b'], '12 rows selected.')).toEqual([null, null])
   expect(rowCounts(['CREATE TABLE t (id NUMBER)'], 'Table created.')).toEqual([null])
   expect(rowCounts(['UPDATE emp SET sal = 1', 'DELETE FROM t'], '2 rows updated.\n\n5 rows deleted.')).toEqual([2, 5])
-})
-
-test('pede autorização só para INSERT, UPDATE, DELETE e MERGE', () => {
-  expect(needsApproval('INSERT INTO t VALUES (1)')).toBe(true)
-  expect(needsApproval('update emp set sal = 1')).toBe(true)
-  expect(needsApproval('DELETE FROM t')).toBe(true)
-  expect(needsApproval('MERGE INTO t USING s ON (t.id = s.id) WHEN MATCHED THEN UPDATE SET t.a = s.a')).toBe(true)
-  expect(needsApproval('WITH x AS (SELECT 1 FROM dual) INSERT INTO t SELECT * FROM x')).toBe(true)
-  expect(needsApproval('SELECT * FROM emp')).toBe(false)
-  expect(needsApproval('SELECT last_update, deleted FROM emp')).toBe(false)
-  expect(needsApproval('WITH x AS (SELECT last_update FROM t) SELECT * FROM x')).toBe(false)
-  expect(needsApproval('CREATE TABLE t (id NUMBER)')).toBe(false)
-  expect(needsApproval('TRUNCATE TABLE t')).toBe(false)
-})
-
-test('acha os blocos PL/SQL que o monitor não lista', () => {
-  expect(blocksFromShell("sqlplus -s u/p@db <<'SQL'\nBEGIN\n  UPDATE emp SET sal = 1;\nEND;\n/\nSQL")).toEqual([
-    'BEGIN\n  UPDATE emp SET sal = 1;\nEND;',
-  ])
-  expect(blocksFromFields({ sql: 'CREATE OR REPLACE PROCEDURE p AS BEGIN NULL; END;' })).toEqual([
-    'CREATE OR REPLACE PROCEDURE p AS BEGIN NULL; END;',
-  ])
-  expect(blocksFromFields({ sql: 'SELECT * FROM emp', query: 'UPDATE emp SET sal = 1' })).toEqual([])
-  expect(blocksFromShell('git commit -m "begin: nova tela"')).toEqual([])
 })

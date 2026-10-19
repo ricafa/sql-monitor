@@ -3,19 +3,9 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { SqlRun } from '../types'
 import { CLEAR, RECENT, SCHEMA, fromJson, isoFrom, upsert } from './db'
-import { formatBlock, formatSql, plainText } from './format'
+import { formatSql } from './format'
 import type { Line, PartKind } from './format'
-import {
-  blocksFromFields,
-  blocksFromShell,
-  effectIn,
-  failureIn,
-  kindOf,
-  needsApproval,
-  rowCounts,
-  sqlFromFields,
-  sqlFromShell,
-} from './sql'
+import { effectIn, failureIn, kindOf, rowCounts, sqlFromFields, sqlFromShell } from './sql'
 
 const PANE = 'sql-monitor'
 const runs = atom({ plugin: 'sql-monitor', key: 'runs' } as const, [])
@@ -23,7 +13,6 @@ const onlyChanges = atom({ plugin: 'sql-monitor', key: 'onlyChanges' } as const,
 const LIMIT = 200
 /** Linhas do SQL mostradas por execução; o resto vira "… +N linhas". */
 const SQL_LINES = 12
-const APPROVE = 'Autorizar'
 const COLOR: Record<PartKind, 'blueBright' | 'cyan' | 'green' | 'yellow' | 'magenta' | undefined> = {
   keyword: 'blueBright',
   function: 'cyan',
@@ -109,45 +98,8 @@ function sqlOf(input: Record<string, unknown>): string[] {
   return tool.startsWith('mcp__') ? sqlFromFields(input) : []
 }
 
-function blocksOf(input: Record<string, unknown>): string[] {
-  const tool = String(input.tool)
-  if (tool === 'Bash' || tool === 'PowerShell') {
-    return typeof input.command === 'string' ? blocksFromShell(input.command) : []
-  }
-  return tool.startsWith('mcp__') ? blocksFromFields(input) : []
-}
-
 function short(text: string, size: number): string {
   return text.length > size ? `${text.slice(0, size - 1)}…` : text
-}
-
-/**
- * Pergunta ao usuário antes de INSERT/UPDATE/DELETE/MERGE e de qualquer bloco PL/SQL;
- * devolve o motivo da negativa, ou undefined se autorizou.
- */
-async function askApproval(
-  $: EngineInterface,
-  tool: string,
-  statements: readonly string[],
-  blocks: readonly string[],
-): Promise<string | undefined> {
-  const dml = statements.filter(needsApproval)
-  if (dml.length === 0 && blocks.length === 0) return undefined
-  const shown = [
-    ...dml.map(one => plainText(formatSql(one))),
-    ...blocks.map(one => formatBlock(one)),
-  ].join('\n\n')
-  const what = [
-    dml.length > 0 ? (dml.length === 1 ? 'uma alteração' : `${dml.length} alterações`) : '',
-    blocks.length > 0 ? (blocks.length === 1 ? 'um bloco PL/SQL' : `${blocks.length} blocos PL/SQL`) : '',
-  ]
-    .filter(Boolean)
-    .join(' e ')
-  const question = `${tool} quer executar ${what}:\n\n${short(shown, 1500)}\n\nAutorizar?`
-  const answer = await $.ui
-    .ask(question, { options: [APPROVE, 'Negar'], header: 'Autorização' })
-    .catch(() => undefined)
-  return answer === APPROVE ? undefined : 'Execução de SQL negada pelo usuário no SQL Monitor.'
 }
 
 function mark(run: SqlRun): string {
@@ -195,13 +147,8 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
-    const input = e as unknown as Record<string, unknown>
-    const statements = sqlOf(input)
-    const blocks = blocksOf(input)
-    if (statements.length === 0) {
-      const refused = await askApproval($, String(e.tool), [], blocks)
-      return refused ? { deny: refused } : next(e)
-    }
+    const statements = sqlOf(e as unknown as Record<string, unknown>)
+    if (statements.length === 0) return next(e)
 
     const base = e.tool_use_id ?? `${Date.now()}`
     const at = new Date().toISOString()
@@ -215,8 +162,7 @@ export const register: Register = on => {
     }))
     await update($, runs, list => [...list, ...pending].slice(-LIMIT))
 
-    const denied = await askApproval($, String(e.tool), statements, blocks)
-    const ran: Awaited<ReturnType<typeof next>> = denied ? { deny: denied } : await next(e)
+    const ran = await next(e)
 
     const output = ran.text ?? ''
     const error =
@@ -245,18 +191,7 @@ export const register: Register = on => {
     })
 
     return ran
-  }).catch(($, e, next) => {
-    // Se o hook quebrar antes de a ferramenta rodar, um INSERT/UPDATE/DELETE/MERGE não passa sem pergunta.
-    if (next.called) return next(e)
-    let isDml = false
-    try {
-      const input = e as unknown as Record<string, unknown>
-      isDml = sqlOf(input).some(needsApproval) || blocksOf(input).length > 0
-    } catch {
-      isDml = false
-    }
-    return isDml ? { deny: 'O SQL Monitor falhou ao pedir autorização; o comando foi bloqueado.' } : next(e)
-  })
+  }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Text } = $.ui.resolve(e)
