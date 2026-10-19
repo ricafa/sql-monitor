@@ -6,6 +6,19 @@ import { CLEAR, RECENT, SCHEMA, fromJson, isoFrom, upsert } from './db'
 import { formatSql } from './format'
 import type { Line, PartKind } from './format'
 import { effectIn, failureIn, kindOf, rowCounts, sqlFromFields, sqlFromShell } from './sql'
+import {
+  DIM,
+  FAINT,
+  KIND_COLOR,
+  KIND_MARK,
+  PANEL_COLOR,
+  STATUS_COLOR,
+  STATUS_MARK,
+  agoOf,
+  clockOf,
+  gauge,
+  summaryOf,
+} from './view'
 
 const PANE = 'sql-monitor'
 const runs = atom({ plugin: 'sql-monitor', key: 'runs' } as const, [])
@@ -102,10 +115,6 @@ function short(text: string, size: number): string {
   return text.length > size ? `${text.slice(0, size - 1)}…` : text
 }
 
-function mark(run: SqlRun): string {
-  return run.status === 'falha' ? '✗' : run.status === 'sucesso' ? '✓' : '…'
-}
-
 function lines(rows: number | null | undefined): string | undefined {
   if (rows === null || rows === undefined) return undefined
   return rows === 1 ? '1 linha' : `${rows} linhas`
@@ -114,11 +123,6 @@ function lines(rows: number | null | undefined): string | undefined {
 function sqlLines(sql: string): { lines: Line[]; hidden: number } {
   const all = formatSql(sql)
   return { lines: all.slice(0, SQL_LINES), hidden: Math.max(0, all.length - SQL_LINES) }
-}
-
-function when(at: string): string {
-  const date = new Date(at)
-  return Number.isNaN(date.getTime()) ? at : date.toLocaleString('pt-BR')
 }
 
 export const register: Register = on => {
@@ -194,65 +198,122 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const els = $.ui.resolve(e)
+    const { Box, Button, Text } = els
+    // Superfícies sem Client (vscode, mobile) ficam com o símbolo parado.
+    const hasClient = 'Client' in els
     const list = await read($, runs)
     const isFiltered = await read($, onlyChanges)
     const shown = isFiltered ? list.filter(one => one.kind === 'alteração') : list
-    // Do mais novo para o mais antigo, enquanto couber: cada execução ocupa a margem, o
-    // cabeçalho, as linhas do SQL e, se houver, o resultado.
-    let free = (e.viewport?.rows ?? 24) - 3
+    const now = Date.now()
+    const { total, changes, failures, running, successPct } = summaryOf(list)
+    const rate = successPct === null ? null : gauge(successPct, 8)
+    const busy = (key: string, kind: 'spinner' | 'timer' | 'sweep', since: number, width: number, color: string) => (
+      <els.Client key={key} module="./busy.tsx" width={width} height={1} props={{ kind, color, dim: FAINT, since, now, width }} />
+    )
+
+    // Do mais novo para o mais antigo, enquanto couber: cada execução é um cartão com borda
+    // (2 linhas), cabeçalho, as linhas do SQL e, se houver, o resultado. O painel de resumo
+    // ocupa 5 linhas.
+    let free = (e.viewport?.rows ?? 24) - 6
     const visible: { run: SqlRun; lines: Line[]; hidden: number }[] = []
     for (const run of [...shown].reverse()) {
       const sql = sqlLines(run.sql)
-      const height = 2 + sql.lines.length + (sql.hidden > 0 ? 1 : 0) + (run.detail ? 1 : 0)
+      const height = 3 + sql.lines.length + (sql.hidden > 0 ? 1 : 0) + (run.detail || run.status === 'executando' ? 1 : 0)
       if (visible.length > 0 && height > free) break
       free -= height
       visible.push({ run, ...sql })
     }
-    const changes = list.filter(one => one.kind === 'alteração').length
-    const failures = list.filter(one => one.status === 'falha').length
 
     return (
       <Box flexDirection="column">
-        <Box>
-          <Button
-            key="todas"
-            label={`Todas (${list.length})`}
-            hotkey="t"
-            variant={isFiltered ? 'secondary' : 'primary'}
-            onPress={() => update($, onlyChanges, () => false)}
-          />
-          <Text> </Text>
-          <Button
-            key="alteracoes"
-            label={`Alterações (${changes})`}
-            hotkey="a"
-            variant={isFiltered ? 'primary' : 'secondary'}
-            onPress={() => update($, onlyChanges, () => true)}
-          />
-          <Text dimColor> · {failures} falhas</Text>
+        <Box flexDirection="column" borderStyle="round" borderColor={PANEL_COLOR} paddingX={1}>
+          <Box justifyContent="space-between">
+            <Text color={PANEL_COLOR} bold>
+              SQL Monitor
+            </Text>
+            {running > 0 ? (
+              <Box>
+                {hasClient ? busy('spin-top', 'spinner', now, 1, 'warning') : <Text color="warning">●</Text>}
+                <Text color="warning">{` executando ${running}`}</Text>
+              </Box>
+            ) : (
+              <Text color={DIM}>○ ocioso</Text>
+            )}
+          </Box>
+          <Text wrap="truncate">
+            <Text dimColor>execuções </Text>
+            <Text bold>{total}</Text>
+            <Text color={KIND_COLOR['alteração']}>{`   ${KIND_MARK['alteração']} ${changes}`}</Text>
+            <Text dimColor> alterações</Text>
+            <Text color={failures > 0 ? 'error' : DIM}>{`   ✗ ${failures}`}</Text>
+            <Text dimColor> falhas</Text>
+            {rate && successPct !== null ? (
+              <Text>
+                <Text dimColor>{'   ok '}</Text>
+                <Text color={successPct < 80 ? 'error' : 'success'}>{rate.on}</Text>
+                <Text color={FAINT}>{rate.off}</Text>
+                <Text bold>{` ${Math.round(successPct)}%`}</Text>
+              </Text>
+            ) : null}
+          </Text>
+          <Box>
+            <Button
+              key="todas"
+              label={`Todas (${total})`}
+              hotkey="t"
+              variant={isFiltered ? 'secondary' : 'primary'}
+              onPress={() => update($, onlyChanges, () => false)}
+            />
+            <Text> </Text>
+            <Button
+              key="alteracoes"
+              label={`Alterações (${changes})`}
+              hotkey="a"
+              variant={isFiltered ? 'primary' : 'secondary'}
+              onPress={() => update($, onlyChanges, () => true)}
+            />
+          </Box>
         </Box>
         {shown.length === 0 && (
-          <Text dimColor>
-            {isFiltered ? 'Nenhuma alteração registrada.' : 'Nenhum SQL executado pela IA ainda.'}
-          </Text>
+          <Box borderStyle="round" borderColor={FAINT} paddingX={1}>
+            <Text color={FAINT}>{isFiltered ? 'Nenhuma alteração registrada.' : 'Nenhum SQL executado pela IA ainda.'}</Text>
+          </Box>
         )}
-        {visible.map(({ run, lines: sql, hidden }) => (
-            <Box flexDirection="column" marginTop={1}>
-              <Text>
-                <Text
-                  bold
-                  color={run.status === 'falha' ? 'red' : run.status === 'sucesso' ? 'green' : 'yellow'}
-                >
-                  {mark(run)} {run.status}
-                </Text>
-                <Text color={run.kind === 'alteração' ? 'magenta' : 'cyan'}> {run.kind}</Text>
-                {lines(run.rows) && <Text bold> · {lines(run.rows)}</Text>}
-                <Text dimColor>
-                  {' '}
-                  {when(run.at)} · {run.tool}
-                </Text>
-              </Text>
+        {visible.map(({ run, lines: sql, hidden }) => {
+          const color = STATUS_COLOR[run.status]
+          const isRunning = run.status === 'executando'
+          const since = Date.parse(run.at) || now
+          return (
+            <Box flexDirection="column" borderStyle="round" borderColor={color} paddingX={1}>
+              <Box justifyContent="space-between">
+                <Box>
+                  {isRunning && hasClient ? (
+                    busy(`spin-${run.id}`, 'spinner', since, 1, color)
+                  ) : (
+                    <Text bold color={color}>
+                      {STATUS_MARK[run.status]}
+                    </Text>
+                  )}
+                  <Text wrap="truncate">
+                    <Text bold color={color}>
+                      {` ${run.status}`}
+                    </Text>
+                    <Text bold color={KIND_COLOR[run.kind]}>
+                      {`  ${KIND_MARK[run.kind]} ${run.kind}`}
+                    </Text>
+                    <Text dimColor>{`  ${run.tool}`}</Text>
+                  </Text>
+                </Box>
+                <Box>
+                  {isRunning && hasClient ? busy(`time-${run.id}`, 'timer', since, 6, color) : null}
+                  <Text wrap="truncate">
+                    {lines(run.rows) && <Text bold>{`${lines(run.rows)}  `}</Text>}
+                    <Text color={FAINT}>{`${isRunning && hasClient ? '  ' : ''}${clockOf(run.at, now)}`}</Text>
+                    <Text dimColor>{` · ${agoOf(run.at, now)}`}</Text>
+                  </Text>
+                </Box>
+              </Box>
               {sql.map(one => (
                 <Text>
                   {' '.repeat(one.indent)}
@@ -263,10 +324,17 @@ export const register: Register = on => {
                   ))}
                 </Text>
               ))}
-              {hidden > 0 && <Text dimColor>… +{hidden} linhas</Text>}
-              {run.detail && <Text dimColor>{run.detail}</Text>}
+              {hidden > 0 && <Text color={FAINT}>… +{hidden} linhas</Text>}
+              {isRunning && hasClient ? busy(`sweep-${run.id}`, 'sweep', since, 24, color) : null}
+              {run.detail &&
+                (run.status === 'falha' ? (
+                  <Text color="error" wrap="truncate">{`✗ ${run.detail}`}</Text>
+                ) : (
+                  <Text dimColor wrap="truncate">{`› ${run.detail}`}</Text>
+                ))}
             </Box>
-          ))}
+          )
+        })}
       </Box>
     )
   })
