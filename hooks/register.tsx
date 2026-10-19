@@ -3,9 +3,9 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { SqlRun } from '../types'
 import { CLEAR, RECENT, SCHEMA, fromJson, isoFrom, upsert } from './db'
-import { formatSql } from './format'
+import { formatSql, plainText } from './format'
 import type { Line, PartKind } from './format'
-import { effectIn, failureIn, kindOf, rowCounts, sqlFromFields, sqlFromShell } from './sql'
+import { effectIn, failureIn, kindOf, needsApproval, rowCounts, sqlFromFields, sqlFromShell } from './sql'
 
 const PANE = 'sql-monitor'
 const runs = atom({ plugin: 'sql-monitor', key: 'runs' } as const, [])
@@ -13,6 +13,7 @@ const onlyChanges = atom({ plugin: 'sql-monitor', key: 'onlyChanges' } as const,
 const LIMIT = 200
 /** Linhas do SQL mostradas por execução; o resto vira "… +N linhas". */
 const SQL_LINES = 12
+const APPROVE = 'Autorizar'
 const COLOR: Record<PartKind, 'blueBright' | 'cyan' | 'green' | 'yellow' | 'magenta' | undefined> = {
   keyword: 'blueBright',
   function: 'cyan',
@@ -102,6 +103,16 @@ function short(text: string, size: number): string {
   return text.length > size ? `${text.slice(0, size - 1)}…` : text
 }
 
+/** Pergunta ao usuário antes de INSERT/UPDATE/DELETE/MERGE; devolve o motivo da negativa, ou undefined se autorizou. */
+async function askApproval($: EngineInterface, tool: string, statements: readonly string[]): Promise<string | undefined> {
+  const dml = statements.filter(needsApproval)
+  if (dml.length === 0) return undefined
+  const sql = dml.map(one => plainText(formatSql(one))).join('\n\n')
+  const question = `${tool} quer executar ${dml.length === 1 ? 'esta alteração' : `${dml.length} alterações`}:\n\n${short(sql, 800)}\n\nAutorizar?`
+  const answer = await $.ui.ask(question, { options: [APPROVE, 'Negar'], header: 'Alterar dados' }).catch(() => undefined)
+  return answer === APPROVE ? undefined : 'Alteração de dados negada pelo usuário no SQL Monitor.'
+}
+
 function mark(run: SqlRun): string {
   return run.status === 'falha' ? '✗' : run.status === 'sucesso' ? '✓' : '…'
 }
@@ -162,7 +173,8 @@ export const register: Register = on => {
     }))
     await update($, runs, list => [...list, ...pending].slice(-LIMIT))
 
-    const ran = await next(e)
+    const denied = await askApproval($, String(e.tool), statements)
+    const ran: Awaited<ReturnType<typeof next>> = denied ? { deny: denied } : await next(e)
 
     const output = ran.text ?? ''
     const error =
@@ -191,7 +203,17 @@ export const register: Register = on => {
     })
 
     return ran
-  }).catch(($, e, next) => next(e))
+  }).catch(($, e, next) => {
+    // Se o hook quebrar antes de a ferramenta rodar, um INSERT/UPDATE/DELETE/MERGE não passa sem pergunta.
+    if (next.called) return next(e)
+    let isDml = false
+    try {
+      isDml = sqlOf(e as unknown as Record<string, unknown>).some(needsApproval)
+    } catch {
+      isDml = false
+    }
+    return isDml ? { deny: 'O SQL Monitor falhou ao pedir autorização; o comando foi bloqueado.' } : next(e)
+  })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Button, Text } = $.ui.resolve(e)

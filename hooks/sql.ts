@@ -75,6 +75,11 @@ export function kindOf(statements: readonly string[]): SqlKind {
     : 'consulta'
 }
 
+/** INSERT, UPDATE, DELETE e MERGE (inclusive depois de um WITH): os que pedem autorização. */
+export function needsApproval(sql: string): boolean {
+  return /^(insert|update|delete|merge)\b/i.test(sql) || /^with\b[\s\S]*\b(insert|update|delete|merge)\b/i.test(sql)
+}
+
 /** A primeira linha de erro do banco na saída, se houver. */
 export function failureIn(output: string): string | undefined {
   return output
