@@ -17,6 +17,6 @@ export type SqlRun = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'sql-monitor': { runs: SqlRun[]; onlyChanges: boolean }
+    'sql-monitor': { runs: SqlRun[]; onlyChanges: boolean; copied: string | null }
   }
 }

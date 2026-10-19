@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { SqlRun } from '../types'
 import { CLEAR, RECENT, SCHEMA, fromJson, isoFrom, upsert } from './db'
-import { formatSql } from './format'
+import { formatSql, plainText } from './format'
 import type { Line, PartKind } from './format'
 import { effectIn, failureIn, kindOf, rowCounts, sqlFromFields, sqlFromShell } from './sql'
 import {
@@ -23,9 +23,13 @@ import {
 const PANE = 'sql-monitor'
 const runs = atom({ plugin: 'sql-monitor', key: 'runs' } as const, [])
 const onlyChanges = atom({ plugin: 'sql-monitor', key: 'onlyChanges' } as const, false)
+/** Id da execução cujo SQL foi copiado por último, para o botão mostrar "Copiado". */
+const copied = atom({ plugin: 'sql-monitor', key: 'copied' } as const, null as string | null)
 const LIMIT = 200
 /** Linhas do SQL mostradas por execução; o resto vira "… +N linhas". */
 const SQL_LINES = 12
+/** Tamanho máximo do SQL guardado por execução; o botão Copiar entrega tudo o que foi guardado. */
+const MAX_SQL = 100_000
 const COLOR: Record<PartKind, 'blueBright' | 'cyan' | 'green' | 'yellow' | 'magenta' | undefined> = {
   keyword: 'blueBright',
   function: 'cyan',
@@ -120,6 +124,22 @@ function lines(rows: number | null | undefined): string | undefined {
   return rows === 1 ? '1 linha' : `${rows} linhas`
 }
 
+/** Copia o SQL inteiro da execução, formatado como o painel mostra, e avisa se deu certo. */
+async function copySql(
+  $: EngineInterface,
+  surface: Parameters<EngineInterface['ui']['copy']>[0]['surface'],
+  run: SqlRun,
+): Promise<void> {
+  const text = plainText(formatSql(run.sql))
+  const done = await $.ui.copy({ text, surface })
+  if (done.isCopied) {
+    await update($, copied, () => run.id)
+    $.ui.toast(`SQL copiado (${lines(text.split('\n').length)}).`, { timeoutMs: 3000 })
+  } else {
+    $.ui.toast(`Não consegui copiar o SQL (${done.reason}).`, { timeoutMs: 6000 })
+  }
+}
+
 function sqlLines(sql: string): { lines: Line[]; hidden: number } {
   const all = formatSql(sql)
   return { lines: all.slice(0, SQL_LINES), hidden: Math.max(0, all.length - SQL_LINES) }
@@ -160,7 +180,7 @@ export const register: Register = on => {
       id: statements.length === 1 ? base : `${base}:${index + 1}`,
       at,
       tool: String(e.tool),
-      sql: short(sql, 4000),
+      sql: short(sql, MAX_SQL),
       kind: kindOf([sql]),
       status: 'executando',
     }))
@@ -204,6 +224,7 @@ export const register: Register = on => {
     const hasClient = 'Client' in els
     const list = await read($, runs)
     const isFiltered = await read($, onlyChanges)
+    const lastCopied = await read($, copied)
     const shown = isFiltered ? list.filter(one => one.kind === 'alteração') : list
     const now = Date.now()
     const { total, changes, failures, running, successPct } = summaryOf(list)
@@ -219,7 +240,7 @@ export const register: Register = on => {
     const visible: { run: SqlRun; lines: Line[]; hidden: number }[] = []
     for (const run of [...shown].reverse()) {
       const sql = sqlLines(run.sql)
-      const height = 3 + sql.lines.length + (sql.hidden > 0 ? 1 : 0) + (run.detail || run.status === 'executando' ? 1 : 0)
+      const height = 4 + sql.lines.length + (run.detail || run.status === 'executando' ? 1 : 0)
       if (visible.length > 0 && height > free) break
       free -= height
       visible.push({ run, ...sql })
@@ -324,7 +345,15 @@ export const register: Register = on => {
                   ))}
                 </Text>
               ))}
-              {hidden > 0 && <Text color={FAINT}>… +{hidden} linhas</Text>}
+              <Box>
+                <Button
+                  key={`copiar-${run.id}`}
+                  label={lastCopied === run.id ? '✓ Copiado' : 'Copiar SQL'}
+                  variant="secondary"
+                  onPress={press => copySql($, press.surface, run)}
+                />
+                {hidden > 0 && <Text color={FAINT}>{`  … +${hidden} linhas ocultas`}</Text>}
+              </Box>
               {isRunning && hasClient ? busy(`sweep-${run.id}`, 'sweep', since, 24, color) : null}
               {run.detail &&
                 (run.status === 'falha' ? (

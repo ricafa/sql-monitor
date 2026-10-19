@@ -79,3 +79,27 @@ test('enquanto a execução roda, o painel mostra o cartão como executando e o 
   expect(after).toEqual({ idle: true, ok: true })
   await ui.unmount()
 })
+
+test('o botão Copiar SQL entrega o SQL inteiro, inclusive o que o painel corta', async ($, on) => {
+  engine(on, '30 rows selected.')
+  let copiedText = ''
+  on('ui.copy', (_$, e) => {
+    copiedText = e.text
+    return { value: { isCopied: true as const } }
+  })
+  const columns = Array.from({ length: 30 }, (_, i) => `coluna_${i + 1}`).join(', ')
+  const sql = `SELECT ${columns} FROM tabela_grande WHERE ativo = 1`
+  await $.tool.call(sqlplus(sql))
+
+  const ui = await $.ui.mount(pane('terminal'))
+  expect(await ui.find({ text: /linhas ocultas/ })).toBeDefined()
+  expect(await ui.find({ text: /coluna_30/ })).toBeUndefined()
+  await ui.press({ key: `copiar-tu-${sql.length}` })
+
+  expect(copiedText).toContain('coluna_30')
+  expect(copiedText).toContain('WHERE ativo = 1')
+  expect(copiedText).not.toContain('…')
+  expect(copiedText.split('\n').length).toBeGreaterThan(12)
+  expect(await ui.find({ text: /Copiado/ })).toBeDefined()
+  await ui.unmount()
+})
